@@ -1,0 +1,92 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel Render
+#pragma kernel Iterate
+#pragma kernel NoiseFill
+#pragma kernel CursorDraw
+
+RWStructuredBuffer<float> fromBuffer;
+RWStructuredBuffer<float> toBuffer;
+
+RWStructuredBuffer<float> kernel;
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture2D<float4> Result;
+
+int fieldWidth;
+int fieldHeight;
+
+int kernelWidth;
+int kernelHeight;
+float kernelMult; // 1/kernel size
+
+float cursorRadSqr;
+float cursorFill;
+int cursorX;
+int cursorY;
+
+int drawOffsetX;
+int drawOffsetY;
+
+int coord(int x, int y, int width)
+{
+	return x + y * width;
+}
+
+float noise(uint x, uint y) //simple noise function I found somewhere
+{
+	uint seed = x & 0x0000ffff | ((y & 0x0000ffff) << 16);
+
+	seed = (seed ^ 61) ^ (seed >> 16);
+	seed *= 9;
+	seed = seed ^ (seed >> 4);
+	seed *= 0x27d4eb2d;
+	seed = seed ^ (seed >> 15);
+
+	return (float)seed / (float)0xffffffff;
+}
+
+[numthreads(32,32,1)]
+void NoiseFill (uint2 id : SV_DispatchThreadID)
+{
+	fromBuffer[coord(id.x, id.y, fieldWidth)] = noise(id.x, id.y);
+}
+
+[numthreads(32,32,1)]
+void CursorDraw (uint2 id : SV_DispatchThreadID)
+{
+	id = uint2(id.x + drawOffsetX, id.y + drawOffsetY);
+
+	if((id.x - cursorX) * (id.x - cursorX) + (id.y - cursorY) * (id.y - cursorY) <= cursorRadSqr)
+	{
+		fromBuffer[coord(id.x, id.y, fieldWidth)] = cursorFill;
+	}
+}
+
+[numthreads(32,32,1)]
+void Iterate (uint2 id : SV_DispatchThreadID)
+{
+	float cell = fromBuffer[coord(id.x, id.y, fieldWidth)];
+
+	for(int i = 0; i < kernelWidth; i++)
+	{
+		for(int j = 0; j < kernelHeight; j++)
+		{
+			int currX = id.x - kernelWidth / 2 + i;
+			int currY = id.y - kernelHeight / 2 + j;
+
+			if(currX >= 0 && currX < fieldWidth && currY >= 0 && currY < fieldHeight)
+			{
+				cell += fromBuffer[coord(currX, currY, fieldWidth)] * kernel[coord(i, j, kernelWidth)] * kernelMult;
+			}
+		}
+	}
+
+	toBuffer[coord(id.x, id.y, fieldWidth)] = saturate(cell);
+}
+
+[numthreads(32,32,1)]
+void Render (uint2 id : SV_DispatchThreadID)
+{
+	Result[id.xy] = float4(0.0f, 0.0f, toBuffer[coord(id.x, id.y, fieldWidth)], 1.0f);
+}
